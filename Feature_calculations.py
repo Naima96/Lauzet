@@ -6,7 +6,8 @@ Created on Mon Mar 14 18:46:56 2022
 """
 import numpy as np
 from scipy import signal
-
+from scipy import stats
+import pandas as pd
 
 def calc_skew(a):
 
@@ -29,31 +30,56 @@ def calc_kurt(a):
     kurt=valsk - 3 
     return kurt
 
-def dominant_frequency(signal_x): #100
+
+def calc_frequency_params(signal_x, sampling_rate=100):
+
     sampling_rate=100
     nfft=1024
     nfft2=512
-    fmin=0.5
-    fmax=4
+    cutoff=12.0
 
     signal_x = signal_x-np.mean(signal_x)
     dim = signal_x.shape
     
     freq = (np.fft.fftfreq(nfft) * sampling_rate)[0:nfft2]
-     
-    lowind=np.where(freq>fmin)[0][0]
-    upind=np.max(np.where(freq<fmax))
-
     haming= np.hamming(dim[0])
     sp_hat = np.fft.fft(signal_x*haming, nfft)
-    
     furval = sp_hat[0:nfft2] * np.conjugate(sp_hat[0:nfft2])
 
-    
-    ind=lowind+np.argmax(np.abs(furval[lowind:upind]))
-    domfreq=freq[ind] 
-    
-    return domfreq
+    idx1 = freq <= cutoff
+    idx_cutoff = np.argwhere(idx1)
+    #all freq less than cutoff
+    freq = freq[idx_cutoff]
+    #keep values less than cutoff
+    sp = furval[idx_cutoff]
+    #normalise
+    sp_norm = sp / sum(sp)
+
+
+    max_freq = freq[sp_norm.argmax()][0] # Feature 1: dominant freq 
+    max_freq_val = sp_norm.max().real    #Feature 2: magnitude of dominant freq
+    idx2 = (freq > max_freq - 0.5) * (freq < max_freq + 0.5)  
+    idx_freq_range = np.where(idx2)[0]
+    dom_freq_ratio = sp_norm[idx_freq_range].real.sum() #Feature 3: dominant frequency ratio
+
+    # Calculate Feature 4: spectral flatness 
+    spectral_flatness = 10.0*np.log10(stats.mstats.gmean(sp_norm)/np.mean(sp_norm))
+
+    # Calculate Feature 5: Estimate spectral entropy
+    spectral_entropy_estimate = 0
+    for isess in range(len(sp_norm)):
+        if sp_norm[isess] != 0:
+            logps = np.log2(sp_norm[isess])
+        else:
+            logps = 0
+        spectral_entropy_estimate = spectral_entropy_estimate - logps * sp_norm[isess]
+
+    spectral_entropy_estimate = spectral_entropy_estimate / np.log2(len(sp_norm))
+
+
+    return max_freq,max_freq_val,dom_freq_ratio,spectral_flatness[0].real,spectral_entropy_estimate[0].real
+
+
 
 
 
@@ -75,6 +101,15 @@ def calc_sma(data):
 def calc_median(mag):
     return np.median(mag)
 
+def calc_rms(data):
+    return np.sqrt(np.mean(data ** 2))
+
+def calc_mean_abs_deviation(data):
+    return stats.median_abs_deviation(data)
+
+def calc_energy(data):
+    squares = data ** 2
+    return squares.sum()
 
 def _moment(a, moment, mean=None):
 
@@ -102,7 +137,42 @@ def _moment(a, moment, mean=None):
             s *= a_zero_mean
     return np.mean(s)
 
-def _calc_feature_window(signal_data):
+def calc_MCR(data):
+    data=data-np.mean(data)
+    MCR=0
+    for ki in range(len(data) - 1):
+        if np.sign(data[ki]) != np.sign(data[ki + 1]):
+            MCR += 1
+    return MCR
+
+def _calc_feature_window(signal_data,window_size,overlap):
+    
+    window_size=int(window_size*100)
+    overlap=int(overlap*100)
+    
+    features=[]
+    for i in range(0,len(signal_data)-window_size,overlap):
+        
+        median=calc_median(signal_data[i,i+window_size])
+        skew=calc_skew(signal_data[i,i+window_size])
+        kurt=calc_kurt(signal_data[i,i+window_size])
+        max_freq,max_freq_val,dom_freq_ratio,spectral_flatness,spectral_entropy_estimate=calc_frequency_params(signal_data[i,i+window_size])
+        SMA=calc_sma(signal_data[i,i+window_size])
+        energy=calc_energy(signal_data[i,i+window_size])
+        mad=calc_mean_abs_deviation(signal_data[i,i+window_size])
+        rms=calc_rms(signal_data[i,i+window_size])
+        std=np.std(signal_data[i,i+window_size])
+        minimum=np.amin(signal_data[i,i+window_size])
+        maximum=np.amax(signal_data[i,i+window_size])
+        MCR=calc_MCR(signal_data[i,i+window_size])
+        
+        features.append([median,std,skew,kurt,SMA,energy,mad,rms,minimum,maximum,MCR,max_freq,max_freq_val,dom_freq_ratio,spectral_flatness,spectral_entropy_estimate])
+        
+    
+    features_df=pd.DataFrame([features])
+    return(features_df)
+        
+        
     
     
     
